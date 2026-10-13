@@ -286,12 +286,12 @@
         function playWrongSound() { if (synthWrong) synthWrong.triggerAttackRelease("C3", "8n"); }
 
         
-        // 預設 API 網址（若有部屬 Google Apps Script Web App 請填入此處）
-        const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbz6dLsRxUD1e_gKaQ8aBVgL3tPTVQ5svnxyWimJ6Sc_QXXxv76ySUeY5iBkfLfQzAKtig/exec";
+        // 預設題庫來源：已直接連結您的 Google 試算表（亦可使用 Apps Script Web App 網址）
+        const DEFAULT_SOURCE_URL = "https://docs.google.com/spreadsheets/d/1MMrf7MsXMa6N2H5cDFWcLlCpk9GQao0zVws6cKTcH1E/edit?gid=1894289031#gid=1894289031";
         
-        // 取得有效 API URL（優先讀取 URL 參數 ?api= 或 LocalStorage）
+        // 取得有效題庫來源（優先讀取 URL 參數 ?sheet= 或 ?api= 或 LocalStorage）
         const urlParams = new URLSearchParams(window.location.search);
-        let activeApiUrl = urlParams.get('api') || localStorage.getItem('wordGame_customApiUrl') || DEFAULT_API_URL;
+        let activeSourceUrl = urlParams.get('sheet') || urlParams.get('api') || localStorage.getItem('wordGame_customSourceUrl') || DEFAULT_SOURCE_URL;
 
         // 內建豐富預設題庫（涵蓋康軒、真平、南一各版本，確保離線或未連線時即可立即遊玩）
         const BUILTIN_QUESTIONS = [
@@ -322,6 +322,46 @@
             { version: "南一", grade: "三年級", lesson: "第一課 學校好所在", chunks: "老師講故事 / 逐家恬恬聽", answer: "老師講故事逐家恬恬聽" }
         ];
 
+        // 解析 Google 試算表（透過 Google Visualization API 即時跨域讀取公開試算表）
+        async function fetchFromGoogleSheet(sheetUrl) {
+            const idMatch = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
+            if (!idMatch) return null;
+            const docId = idMatch[1];
+            let gid = "0";
+            const gidMatch = sheetUrl.match(/gid=([0-9]+)/);
+            if (gidMatch) gid = gidMatch[1];
+
+            const gvizUrl = `https://docs.google.com/spreadsheets/d/${docId}/gviz/tq?tqx=out:json&gid=${gid}`;
+            const response = await fetch(gvizUrl);
+            const text = await response.text();
+            const jsonStr = text.substring(text.indexOf('{'), text.lastIndexOf('}') + 1);
+            const data = JSON.parse(jsonStr);
+            const rawRows = data.table.rows.map(r => r.c.map(cell => (cell ? cell.v : '')));
+            if (rawRows.length <= 1) return null;
+
+            const header = rawRows[0].map(h => String(h || '').trim());
+            const colVersion = header.findIndex(h => h.includes('版本'));
+            const colGrade = header.findIndex(h => h.includes('年級'));
+            const colLesson = header.findIndex(h => h.includes('課別') || h.includes('課次'));
+            const colChunks = header.findIndex(h => h.includes('重組詞塊') || h.includes('重組'));
+            const colAnswer = header.findIndex(h => h.includes('完整句子') || h.includes('解答'));
+
+            const questions = [];
+            for (let i = 1; i < rawRows.length; i++) {
+                const row = rawRows[i];
+                const v = String((colVersion !== -1 ? row[colVersion] : row[0]) || '').trim();
+                const g = String((colGrade !== -1 ? row[colGrade] : row[1]) || '').trim();
+                const l = String((colLesson !== -1 ? row[colLesson] : row[2]) || '').trim();
+                const c = String((colChunks !== -1 ? row[colChunks] : row[10]) || '').trim();
+                const a = String((colAnswer !== -1 ? row[colAnswer] : row[12]) || '').trim();
+
+                if (c && a) {
+                    questions.push({ version: v, grade: g, lesson: l, chunks: c, answer: a });
+                }
+            }
+            return questions.length > 0 ? questions : null;
+        }
+
         async function initDataLoader() {
             // 1. 若在 Google Apps Script iframe 環境中
             if (typeof google !== 'undefined' && google.script && google.script.run) {
@@ -332,25 +372,39 @@
                 return;
             }
 
-            // 2. 若在 GitHub Pages 或外部網頁，嘗試透過 API 讀取 JSON
-            if (activeApiUrl) {
+            // 2. 若為 Google 試算表連結，直接跨域讀取試算表內容
+            if (activeSourceUrl && activeSourceUrl.includes('docs.google.com/spreadsheets')) {
                 try {
-                    const response = await fetch(activeApiUrl);
+                    const questions = await fetchFromGoogleSheet(activeSourceUrl);
+                    if (questions && questions.length > 0) {
+                        console.log("成功從 Google 試算表即時載入題庫，共", questions.length, "筆題目");
+                        onDataLoaded(questions);
+                        return;
+                    }
+                } catch (err) {
+                    console.warn("直接讀取 Google 試算表失敗，嘗試其他來源或內建題庫:", err);
+                }
+            }
+
+            // 3. 若為 Google Apps Script Web App API 網址，透過 JSON 格式讀取
+            if (activeSourceUrl && activeSourceUrl.includes('script.google.com')) {
+                try {
+                    const response = await fetch(activeSourceUrl);
                     const contentType = response.headers.get("content-type") || "";
                     if (contentType.includes("application/json")) {
                         const json = await response.json();
                         if (Array.isArray(json) && json.length > 0) {
-                            console.log("成功從 Google Sheets API 載入題庫，共", json.length, "筆題目");
+                            console.log("成功從 Google Apps Script API 載入題庫，共", json.length, "筆題目");
                             onDataLoaded(json);
                             return;
                         }
                     }
                 } catch (err) {
-                    console.warn("API 題庫連線異常，自動載入內建範例題庫:", err);
+                    console.warn("Apps Script API 載入失敗:", err);
                 }
             }
 
-            // 3. 預設載入內建題庫
+            // 4. 預設載入內建題庫
             console.log("載入內建題庫完成");
             onDataLoaded(BUILTIN_QUESTIONS);
         }
@@ -614,8 +668,8 @@
             <p class="text-sm text-gray-600 mb-4 leading-relaxed">
                 可自訂 Google Sheets (Apps Script Web App) 題庫 API 網址，或使用內建範例題庫。
             </p>
-            <label class="block text-sm font-bold text-gray-700 mb-1">Google Apps Script Web App URL：</label>
-            <input type="text" id="apiInput" placeholder="https://script.google.com/macros/s/.../exec"
+            <label class="block text-sm font-bold text-gray-700 mb-1">Google 試算表網址 或 Apps Script 網址：</label>
+            <input type="text" id="apiInput" placeholder="請貼上 Google 試算表網址 或 Apps Script /exec 網址"
                 class="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none text-sm mb-4">
             
             <div class="flex flex-col sm:flex-row gap-3 justify-end">
@@ -634,7 +688,7 @@
 
     <script>
         function openApiModal() {
-            document.getElementById('apiInput').value = localStorage.getItem('wordGame_customApiUrl') || DEFAULT_API_URL;
+            document.getElementById('apiInput').value = localStorage.getItem('wordGame_customSourceUrl') || DEFAULT_SOURCE_URL;
             document.getElementById('apiConfigModal').classList.remove('hidden');
             document.getElementById('apiConfigModal').classList.add('flex');
         }
@@ -645,14 +699,14 @@
         function saveApiUrl() {
             const val = document.getElementById('apiInput').value.trim();
             if (val) {
-                localStorage.setItem('wordGame_customApiUrl', val);
+                localStorage.setItem('wordGame_customSourceUrl', val);
             } else {
-                localStorage.removeItem('wordGame_customApiUrl');
+                localStorage.removeItem('wordGame_customSourceUrl');
             }
             window.location.reload();
         }
         function resetToBuiltin() {
-            localStorage.removeItem('wordGame_customApiUrl');
+            localStorage.setItem('wordGame_customSourceUrl', 'BUILTIN');
             window.location.reload();
         }
     </script>
