@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>語詞重組挑戰賽</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: linear-gradient(135deg, #e0f2fe 0%, #fef9c3 100%);  
+            overscroll-behavior-y: none;
+        }
+        
+         
+        .word-chunk {
+            cursor: pointer;
+            transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.15s;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation;
+        }
+        
+        .word-chunk:hover { transform: translateY(-2px); }
+        .word-chunk:active { cursor: grabbing; transform: scale(1.05); }
+        
+        .sortable-ghost { opacity: 0.4; background-color: #cbd5e1 !important; border: 2px dashed #94a3b8 !important; }
+        .hidden { display: none !important; }
+        
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body class="min-h-screen text-gray-800 p-2 md:p-4 flex flex-col">
+
+    
+    <div id="loadingScreen" class="fixed inset-0 bg-white/90 z-50 flex flex-col items-center justify-center backdrop-blur-sm">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-500 mb-4"></div>
+        <p class="text-xl font-bold text-blue-700 tracking-wider">正在讀取題庫，請稍候...</p>
+    </div>
+
+    
+    <header class="bg-white/80 backdrop-blur-md rounded-2xl shadow-sm border border-white p-3 md:px-6 mb-4 flex justify-between items-center">
+        
+        <div id="headerTitleContainer" class="flex items-center gap-3 cursor-pointer hover:opacity-70 transition transform hover:scale-105" title="點擊重新選擇關卡">
+            <span class="text-3xl">🧩</span>
+            <h1 class="text-2xl font-extrabold text-blue-800 tracking-wide">語詞重組大挑戰</h1>
+        </div>
+        <div class="hidden md:flex gap-2">
+            <!-- API 設定按鈕 -->
+            <button id="navApiSettings" onclick="openApiModal()" class="bg-blue-100 hover:bg-blue-200 text-blue-800 px-4 py-2 rounded-full font-bold transition flex items-center gap-2 text-sm md:text-base">
+                ⚙️ 題庫來源
+            </button>
+            <button id="navLeaderboard" class="bg-yellow-100 hover:bg-yellow-200 text-yellow-800 px-4 py-2 rounded-full font-bold transition flex items-center gap-2">
+                🏆 英雄榜
+            </button>
+        </div>
+    </header>
+
+    <main class="flex flex-col lg:flex-row gap-4 flex-grow max-w-[1400px] mx-auto w-full">
+        
+        
+        <section class="flex-grow flex flex-col gap-4 relative">
+            <div class="bg-white rounded-3xl shadow-lg border border-blue-100 p-6 flex-grow flex flex-col relative overflow-hidden">
+                
+                <div id="gameOverlay" class="absolute inset-0 bg-blue-50/90 backdrop-blur-[2px] z-20 flex flex-col items-center justify-center rounded-3xl">
+                    <span class="text-6xl mb-4">👈</span>
+                    <h2 class="text-2xl font-bold text-blue-800 mb-2">請先在右側選擇關卡設定</h2>
+                    <p class="text-blue-600 font-medium">選擇完畢後按下「開始挑戰」即可開始！</p>
+                </div>
+
+                <div id="feedbackOverlay" class="absolute inset-0 bg-white/95 backdrop-blur-md z-30 hidden flex-col items-center justify-center p-6 text-center rounded-3xl">
+                    <div id="feedbackIcon" class="text-7xl mb-4 animate-bounce">✅</div>
+                    <h2 id="feedbackTitle" class="text-4xl font-extrabold text-green-600 mb-4">答對了！</h2>
+                    <p id="feedbackDesc" class="text-xl text-gray-700 font-medium mb-8 max-w-xl leading-relaxed">
+                        獲得分數: +<span id="feedbackScoreEarned" class="font-bold text-blue-600 text-2xl">0</span> 分
+                    </p>
+                    <button id="nextQuestionBtn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold text-2xl py-4 px-12 rounded-full shadow-xl transform transition hover:scale-105 active:scale-95">
+                        下一題 ➡️
+                    </button>
+                </div>
+
+                <div id="wrongFeedbackOverlay" class="absolute inset-0 bg-red-50/95 backdrop-blur-md z-30 hidden flex-col items-center justify-center p-6 text-center rounded-3xl">
+                    <div class="text-7xl mb-4 animate-pulse">🤔</div>
+                    <h2 class="text-4xl font-extrabold text-red-600 mb-4">有點可惜，答錯囉！</h2>
+                    <p class="text-xl text-gray-700 font-medium mb-4">正確解答應該是：</p>
+                    <div class="mb-8 p-6 bg-white text-red-800 rounded-2xl border-2 border-red-200 font-bold text-3xl shadow-md max-w-2xl leading-relaxed" id="wrongCorrectAnswerDisplay">
+                    </div>
+                    <button id="retryBtn" class="bg-red-500 hover:bg-red-600 text-white font-bold text-2xl py-4 px-12 rounded-full shadow-xl transform transition hover:scale-105 active:scale-95">
+                        重新作答 🔄
+                    </button>
+                </div>
+
+                <div id="leaderboardView" class="absolute inset-0 bg-yellow-50 z-40 hidden flex-col items-center justify-start p-6 md:p-10 overflow-y-auto rounded-3xl">
+                    <h2 class="text-4xl font-extrabold mb-8 text-yellow-600 flex items-center gap-3">
+                        <span>🏆</span> 挑戰完成！英雄榜
+                    </h2>
+                    <div class="bg-white rounded-2xl p-6 mb-8 w-full max-w-md text-left shadow-md border border-yellow-200">
+                        <div class="flex justify-between items-center mb-3">
+                            <span class="text-lg font-bold text-gray-500">你的總得分</span>
+                            <span id="finalScore" class="font-extrabold text-blue-600 text-4xl">0</span>
+                        </div>
+                        <div class="flex justify-between items-center mb-3 border-t border-gray-100 pt-3">
+                            <span class="text-md text-gray-500 font-medium">總耗時</span>
+                            <span id="finalTime" class="font-bold text-gray-800 text-xl">00:00</span>
+                        </div>
+                        <div class="flex justify-between items-center border-t border-gray-100 pt-3">
+                            <span class="text-md text-gray-500 font-medium">答對題數</span>
+                            <span class="font-bold text-lg"><span id="correctCountDisplay" class="text-green-600">0</span> / 5</span>
+                        </div>
+                    </div>
+
+                    <div id="saveScoreArea" class="w-full max-w-md bg-blue-50 p-6 rounded-2xl border border-blue-200 shadow-sm mb-8">
+                        <label class="block text-md font-bold text-blue-800 mb-3">📝 登錄你的成績：</label>
+                        <select id="studentIdSelect" class="w-full p-4 text-lg border-2 border-blue-300 rounded-xl mb-4 focus:ring-4 focus:ring-blue-200 bg-white font-bold text-gray-700">
+                            <option value="">請點擊選擇座號...</option>
+                        </select>
+                        <button id="saveScoreBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-xl py-3 px-4 rounded-xl shadow-md transition disabled:opacity-50 disabled:cursor-not-allowed">
+                            儲存紀錄
+                        </button>
+                    </div>
+
+                    <div class="w-full max-w-md">
+                        <table class="w-full bg-white rounded-2xl overflow-hidden shadow-sm border border-yellow-200">
+                            <thead class="bg-yellow-100">
+                                <tr>
+                                    <th class="py-3 px-4 font-bold text-yellow-800 text-center">名次</th>
+                                    <th class="py-3 px-4 font-bold text-yellow-800 text-center">座號</th>
+                                    <th class="py-3 px-4 font-bold text-yellow-800 text-right">分數</th>
+                                </tr>
+                            </thead>
+                            <tbody id="leaderboardBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="flex justify-end mb-4 px-2 border-b border-gray-100 pb-2">
+                    <p class="font-bold text-gray-500 text-sm">第 <span id="currentQuestionNum" class="text-blue-600 text-xl">1</span> / 5 題</p>
+                </div>
+
+                <div class="mb-4 flex flex-col">
+                    <div class="flex justify-between items-center mb-2 px-2">
+                        <label class="font-bold text-gray-700">📍 重組後的完整句子：</label>
+                        <span class="text-xs text-gray-400 font-medium">(點擊詞卡可退回待選庫)</span>
+                    </div>
+                    <div id="targetList" class="flex-grow flex flex-wrap content-start gap-3 min-h-[80px] p-4 bg-blue-50/50 rounded-2xl border-2 border-dashed border-blue-300">
+                    </div>
+                </div>
+
+                <div class="flex-grow flex flex-col">
+                    <div class="flex justify-between items-center mb-2 px-2">
+                        <label class="font-bold text-gray-700">📦 待選語詞庫：</label>
+                        <span class="text-xs text-gray-400 font-medium">(支援拖曳或直接點擊字卡)</span>
+                    </div>
+                    <div id="sourceList" class="flex-grow flex flex-wrap content-start gap-4 min-h-[150px] p-6 bg-yellow-50/50 rounded-2xl border-2 border-dashed border-yellow-400 shadow-inner">
+                    </div>
+                </div>
+                
+                <div class="mt-6 flex flex-col sm:flex-row gap-4 justify-center">
+                    <button id="resetOrderBtn" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-4 px-8 text-xl rounded-2xl border-2 border-gray-300 transition disabled:opacity-50 active:scale-95 flex items-center justify-center gap-2 shadow-sm" disabled>
+                        <span>🔄</span> 清空重排
+                    </button>
+                    <button id="submitAnswerBtn" class="flex-grow sm:flex-grow-0 sm:w-1/2 bg-green-500 hover:bg-green-600 text-white font-black text-3xl py-4 px-12 rounded-2xl shadow-xl transition disabled:opacity-50 active:scale-95 flex items-center justify-center gap-2 tracking-wider" disabled>
+                        <span>☑️</span> 確定檢查
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        
+        <aside class="w-full lg:w-[340px] flex flex-col gap-4 flex-shrink-0">
+            <div class="bg-white rounded-3xl shadow-lg border border-yellow-100 p-6">
+                <h3 class="text-lg font-bold text-yellow-800 mb-4 flex items-center gap-2">⚙️ 課本單元設定</h3>
+                <div class="space-y-4">
+                    <select id="selectVersion" class="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-yellow-400 focus:outline-none bg-gray-50 font-bold text-gray-700 disabled:opacity-50" disabled>
+                        <option value="">等待資料...</option>
+                    </select>
+                    <select id="selectGrade" class="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-yellow-400 focus:outline-none bg-gray-50 font-bold text-gray-700 disabled:opacity-50" disabled>
+                        <option value="">請先選擇版本</option>
+                    </select>
+                    <select id="selectLesson" class="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-yellow-400 focus:outline-none bg-gray-50 font-bold text-gray-700 disabled:opacity-50" disabled>
+                        <option value="">請先選擇年級</option>
+                    </select>
+                </div>
+                <button id="startBtn" class="w-full mt-6 bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-extrabold text-lg py-3 rounded-xl shadow-md transition disabled:opacity-50 disabled:cursor-not-allowed transform active:scale-95">
+                    開始挑戰！
+                </button>
+            </div>
+
+            <div class="bg-white rounded-3xl shadow-lg border border-blue-100 p-6 flex flex-col gap-4">
+                <div class="bg-blue-50 rounded-2xl p-4 border border-blue-100 flex justify-between items-center">
+                    <div class="font-bold text-blue-800">⏱️ 作答時間</div>
+                    <div id="timerDisplay" class="text-2xl font-black text-blue-600 font-mono">00:00</div>
+                </div>
+                <div class="bg-yellow-50 rounded-2xl p-4 border border-yellow-100 flex justify-between items-center">
+                    <div class="font-bold text-yellow-800">⭐ 目前得分</div>
+                    <div id="scoreDisplay" class="text-2xl font-black text-yellow-600 font-mono">0</div>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <script>
+        
+        let allData = [];
+        let filteredQuestions = [];
+        let currentQuestionIndex = 0;
+        let score = 0;
+        let correctCount = 0;
+        
+        let timerInterval;
+        let totalElapsedSeconds = 0; 
+        let questionElapsedSeconds = 0; 
+        let questionRetryMode = false;
+
+        const TOTAL_QUESTIONS = 5;
+        const BASE_SCORE_PER_QUESTION = 20;
+
+        let synthCorrect, synthWrong;
+
+        const els = {
+            loading: document.getElementById('loadingScreen'),
+            overlay: document.getElementById('gameOverlay'),
+            feedbackOverlay: document.getElementById('feedbackOverlay'),
+            wrongOverlay: document.getElementById('wrongFeedbackOverlay'), 
+            wrongAnsDisplay: document.getElementById('wrongCorrectAnswerDisplay'), 
+            btnRetry: document.getElementById('retryBtn'), 
+            lbView: document.getElementById('leaderboardView'),
+            
+            selVersion: document.getElementById('selectVersion'),
+            selGrade: document.getElementById('selectGrade'),
+            selLesson: document.getElementById('selectLesson'),
+            btnStart: document.getElementById('startBtn'),
+            headerTitleContainer: document.getElementById('headerTitleContainer'),
+            
+            qNum: document.getElementById('currentQuestionNum'),
+            timer: document.getElementById('timerDisplay'),
+            score: document.getElementById('scoreDisplay'),
+            
+            sourceList: document.getElementById('sourceList'),
+            targetList: document.getElementById('targetList'),
+            
+            btnResetOrder: document.getElementById('resetOrderBtn'),
+            btnSubmit: document.getElementById('submitAnswerBtn'),
+            btnNext: document.getElementById('nextQuestionBtn'),
+            
+            fbIcon: document.getElementById('feedbackIcon'),
+            fbTitle: document.getElementById('feedbackTitle'),
+            fbDesc: document.getElementById('feedbackDesc'),
+            fbScore: document.getElementById('feedbackScoreEarned'),
+            
+            selStudentId: document.getElementById('studentIdSelect'),
+            btnSaveScore: document.getElementById('saveScoreBtn'),
+            saveScoreArea: document.getElementById('saveScoreArea'),
+            lbBody: document.getElementById('leaderboardBody'),
+            btnNavLb: document.getElementById('navLeaderboard')
+        };
+
+        let sortableSource = new Sortable(els.sourceList, { group: 'shared', animation: 150, ghostClass: 'sortable-ghost' });
+        let sortableTarget = new Sortable(els.targetList, { group: 'shared', animation: 150, ghostClass: 'sortable-ghost' });
+
+        for (let i = 1; i <= 28; i++) {
+            let option = document.createElement('option');
+            option.value = i; option.text = `${i} 號`;
+            els.selStudentId.appendChild(option);
+        }
+
+        async function initAudio() {
+            await Tone.start();
+            if (!synthCorrect) {
+                synthCorrect = new Tone.PolySynth(Tone.Synth).toDestination();
+                synthCorrect.volume.value = -5; 
+                synthWrong = new Tone.Synth().toDestination();
+                synthWrong.volume.value = -5;
+            }
+        }
+        function playCorrectSound() { if (synthCorrect) synthCorrect.triggerAttackRelease(["C5", "E5", "G5"], "8n"); }
+        function playWrongSound() { if (synthWrong) synthWrong.triggerAttackRelease("C3", "8n"); }
+
+        
+        // 預設 API 網址（若有部屬 Google Apps Script Web App 請填入此處）
+        const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbz6dLsRxUD1e_gKaQ8aBVgL3tPTVQ5svnxyWimJ6Sc_QXXxv76ySUeY5iBkfLfQzAKtig/exec";
+        
+        // 取得有效 API URL（優先讀取 URL 參數 ?api= 或 LocalStorage）
+        const urlParams = new URLSearchParams(window.location.search);
+        let activeApiUrl = urlParams.get('api') || localStorage.getItem('wordGame_customApiUrl') || DEFAULT_API_URL;
+
+        // 內建豐富預設題庫（涵蓋康軒、真平、南一各版本，確保離線或未連線時即可立即遊玩）
+        const BUILTIN_QUESTIONS = [
+            // 真平版 三年級
+            { version: "真平", grade: "三年級", lesson: "第一課 歡喜來讀冊", chunks: "透早起來 / 刷牙洗面 / 準備上學去", answer: "透早起來刷牙洗面準備上學去" },
+            { version: "真平", grade: "三年級", lesson: "第一課 歡喜來讀冊", chunks: "老師好 / 同學逐家早 / 請入去坐", answer: "老師好同學逐家早請入去坐" },
+            { version: "真平", grade: "三年級", lesson: "第一課 歡喜來讀冊", chunks: "背包包 / 行到教室 / 坐好勢", answer: "背包包行到教室坐好勢" },
+            { version: "真平", grade: "三年級", lesson: "第一課 歡喜來讀冊", chunks: "歡喜來讀冊 / 逐工笑瞇瞇", answer: "歡喜來讀冊逐工笑瞇瞇" },
+            { version: "真平", grade: "三年級", lesson: "第一課 歡喜來讀冊", chunks: "開學頭一工 / 逐家攏歡喜", answer: "開學頭一工逐家攏歡喜" },
+            { version: "真平", grade: "三年級", lesson: "第二課 咱這班", chunks: "咱這班 / 逐家攏是 / 好朋友", answer: "咱這班逐家攏是好朋友" },
+            { version: "真平", grade: "三年級", lesson: "第二課 咱這班", chunks: "落課的時陣 / 鬥陣跳索仔 / 真心適", answer: "落課的時陣鬥陣跳索仔真心適" },
+            { version: "真平", grade: "三年級", lesson: "第二課 咱這班", chunks: "互相幫忙 / 團結力量大", answer: "互相幫忙團結力量大" },
+            
+            // 康軒版 四年級
+            { version: "康軒", grade: "四年級", lesson: "第一課 大自然之美", chunks: "天頂的日頭 / 熾佮像火球 / 真熱", answer: "天頂的日頭熾佮像火球真熱" },
+            { version: "康軒", grade: "四年級", lesson: "第一課 大自然之美", chunks: "青翠的樹林 / 鳥隻咧唱歌 / 真心涼", answer: "青翠的樹林鳥隻咧唱歌真心涼" },
+            { version: "康軒", grade: "四年級", lesson: "第一課 大自然之美", chunks: "清涼的溪水 / 慢慢仔流過 / 石頭邊", answer: "清涼的溪水慢慢仔流過石頭邊" },
+            { version: "康軒", grade: "四年級", lesson: "第一課 大自然之美", chunks: "山頂的風景 / 看起來 / 誠清秀", answer: "山頂的風景看起來誠清秀" },
+            { version: "康軒", grade: "四年級", lesson: "第一課 大自然之美", chunks: "陣陣春風吹 / 花蕊滿山開", answer: "陣陣春風吹花蕊滿山開" },
+            { version: "康軒", grade: "四年級", lesson: "第二課 美味的點心", chunks: "阿媽做的碗粿 / 料多又閣芳", answer: "阿媽做的碗粿料多又閣芳" },
+            { version: "康軒", grade: "四年級", lesson: "第二課 美味的點心", chunks: "逐家食甲 / 喙笑目笑", answer: "逐家食甲喙笑目笑" },
+
+            // 南一步 三年級
+            { version: "南一", grade: "三年級", lesson: "第一課 學校好所在", chunks: "阮的學校 / 有真濟大樹 / 閣有大草地", answer: "阮的學校有真濟大樹閣有大草地" },
+            { version: "南一", grade: "三年級", lesson: "第一課 學校好所在", chunks: "讀冊寫字 / 唱歌跳舞 / 攏真趣味", answer: "讀冊寫字唱歌跳舞攏真趣味" },
+            { version: "南一", grade: "三年級", lesson: "第一課 學校好所在", chunks: "敲鐘的時陣 / 走出來操場 / 𨑨迌", answer: "敲鐘的時陣走出來操場𨑨迌" },
+            { version: "南一", grade: "三年級", lesson: "第一課 學校好所在", chunks: "認真學習 / 天天進步", answer: "認真學習天天進步" },
+            { version: "南一", grade: "三年級", lesson: "第一課 學校好所在", chunks: "老師講故事 / 逐家恬恬聽", answer: "老師講故事逐家恬恬聽" }
+        ];
+
+        async function initDataLoader() {
+            // 1. 若在 Google Apps Script iframe 環境中
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run.withSuccessHandler(onDataLoaded).withFailureHandler(function(e) {
+                    console.warn("GAS 連線失敗，切換至內建題庫:", e);
+                    onDataLoaded(BUILTIN_QUESTIONS);
+                }).getSheetData();
+                return;
+            }
+
+            // 2. 若在 GitHub Pages 或外部網頁，嘗試透過 API 讀取 JSON
+            if (activeApiUrl) {
+                try {
+                    const response = await fetch(activeApiUrl);
+                    const contentType = response.headers.get("content-type") || "";
+                    if (contentType.includes("application/json")) {
+                        const json = await response.json();
+                        if (Array.isArray(json) && json.length > 0) {
+                            console.log("成功從 Google Sheets API 載入題庫，共", json.length, "筆題目");
+                            onDataLoaded(json);
+                            return;
+                        }
+                    }
+                } catch (err) {
+                    console.warn("API 題庫連線異常，自動載入內建範例題庫:", err);
+                }
+            }
+
+            // 3. 預設載入內建題庫
+            console.log("載入內建題庫完成");
+            onDataLoaded(BUILTIN_QUESTIONS);
+        }
+
+        initDataLoader();
+
+
+        function onDataLoaded(data) {
+            allData = data;
+            els.loading.classList.add('hidden');
+            populateVersions();
+        }
+
+        function getUniqueValues(dataArray, key) { return [...new Set(dataArray.map(item => item[key]))].filter(Boolean); }
+
+        function populateVersions() {
+            updateSelect(els.selVersion, getUniqueValues(allData, 'version'), '請選擇版本');
+            els.selVersion.disabled = false;
+        }
+
+        els.selVersion.addEventListener('change', function() {
+            els.selGrade.innerHTML = '<option value="">請選擇年級</option>';
+            els.selLesson.innerHTML = '<option value="">請先選擇年級</option>';
+            els.selLesson.disabled = true; els.btnStart.disabled = true;
+            if (this.value) {
+                updateSelect(els.selGrade, getUniqueValues(allData.filter(i => i.version === this.value), 'grade'), '請選擇年級');
+                els.selGrade.disabled = false;
+            } else { els.selGrade.disabled = true; }
+        });
+
+        els.selGrade.addEventListener('change', function() {
+            els.selLesson.innerHTML = '<option value="">請選擇課別</option>';
+            els.btnStart.disabled = true;
+            if (this.value) {
+                updateSelect(els.selLesson, getUniqueValues(allData.filter(i => i.version === els.selVersion.value && i.grade === this.value), 'lesson'), '請選擇課別');
+                els.selLesson.disabled = false;
+            } else { els.selLesson.disabled = true; }
+        });
+
+        els.selLesson.addEventListener('change', function() { els.btnStart.disabled = !this.value; });
+
+        function updateSelect(el, options, defaultText) {
+            el.innerHTML = `<option value="">${defaultText}</option>`;
+            options.forEach(opt => el.innerHTML += `<option value="${opt}">${opt}</option>`);
+        }
+
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        }
+
+        function formatTime(seconds) {
+            return `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
+        }
+
+        function updateTimer() {
+            totalElapsedSeconds++;
+            questionElapsedSeconds++;
+            els.timer.textContent = formatTime(totalElapsedSeconds);
+        }
+
+        els.btnStart.addEventListener('click', async function() {
+            await initAudio();
+            let possibleQuestions = allData.filter(item => 
+                item.version === els.selVersion.value && item.grade === els.selGrade.value && item.lesson === els.selLesson.value && item.chunks && item.answer
+            );
+            shuffleArray(possibleQuestions);
+            filteredQuestions = possibleQuestions.slice(0, TOTAL_QUESTIONS);
+
+            currentQuestionIndex = 0; score = 0; correctCount = 0; questionRetryMode = false;
+            els.score.textContent = score; totalElapsedSeconds = 0; els.timer.textContent = "00:00";
+            
+            els.selVersion.disabled = true; els.selGrade.disabled = true; els.selLesson.disabled = true;
+            els.btnStart.classList.add('hidden');
+            els.overlay.classList.add('hidden'); els.lbView.classList.add('hidden');
+
+            loadQuestion();
+        });
+
+        
+        els.headerTitleContainer.addEventListener('click', function() {
+            clearInterval(timerInterval); 
+            els.overlay.classList.remove('hidden'); 
+            els.feedbackOverlay.classList.add('hidden');
+            els.wrongOverlay.classList.add('hidden');
+            els.lbView.classList.add('hidden');
+            
+            
+            els.selVersion.disabled = false;
+            els.selGrade.disabled = false;
+            els.selLesson.disabled = false;
+            els.btnStart.classList.remove('hidden');
+            
+            
+            els.targetList.innerHTML = '';
+            els.sourceList.innerHTML = '';
+            els.btnSubmit.disabled = true;
+            els.btnResetOrder.disabled = true;
+            totalElapsedSeconds = 0;
+            els.timer.textContent = "00:00";
+            els.score.textContent = "0";
+            els.qNum.textContent = "1";
+        });
+
+        function createWordChunk(text) {
+            const div = document.createElement('div');
+            div.dataset.text = text.replace(/[\s\/]/g, '');
+            div.className = 'word-chunk bg-white border-2 border-gray-300 rounded-2xl px-6 py-4 text-3xl font-extrabold text-gray-800 shadow-md flex items-center justify-center tracking-wide';
+            div.textContent = text;
+            div.addEventListener('click', function() {
+                if(synthCorrect) {
+                    const blip = new Tone.Synth({ oscillator: { type: "sine" }, envelope: { attack: 0.01, decay: 0.1, sustain: 0, release: 0.1 } }).toDestination();
+                    blip.volume.value = -15; blip.triggerAttackRelease("C5", "32n");
+                }
+                (this.parentElement.id === 'sourceList') ? els.targetList.appendChild(this) : els.sourceList.appendChild(this);
+            });
+            return div;
+        }
+
+        function loadQuestion() {
+            const currentQ = filteredQuestions[currentQuestionIndex];
+            els.qNum.textContent = currentQuestionIndex + 1;
+            els.btnSubmit.disabled = false; els.btnResetOrder.disabled = false;
+            els.feedbackOverlay.classList.add('hidden'); els.wrongOverlay.classList.add('hidden');
+            questionRetryMode = false;
+
+            let chunksArray = currentQ.chunks.includes('/') ? currentQ.chunks.split('/') : currentQ.chunks.split(' ');
+            chunksArray = chunksArray.map(c => c.trim()).filter(c => c !== "");
+            shuffleArray(chunksArray);
+
+            els.targetList.innerHTML = ''; els.sourceList.innerHTML = '';
+            chunksArray.forEach(chunkText => els.sourceList.appendChild(createWordChunk(chunkText)));
+
+            
+            questionElapsedSeconds = 0;
+            clearInterval(timerInterval);
+            timerInterval = setInterval(updateTimer, 1000);
+        }
+
+        els.btnResetOrder.addEventListener('click', function() {
+            Array.from(els.targetList.children).forEach(item => els.sourceList.appendChild(item));
+        });
+
+        
+        els.btnSubmit.addEventListener('click', function() {
+            if (els.sourceList.children.length > 0) {
+                playWrongSound();
+                const origText = els.btnSubmit.innerHTML;
+                els.btnSubmit.innerHTML = "<span>⚠️</span> 請排完所有字卡";
+                els.btnSubmit.classList.replace('bg-green-500', 'bg-red-500'); els.btnSubmit.classList.replace('hover:bg-green-600', 'hover:bg-red-600');
+                setTimeout(() => {
+                    els.btnSubmit.innerHTML = origText;
+                    els.btnSubmit.classList.replace('bg-red-500', 'bg-green-500'); els.btnSubmit.classList.replace('hover:bg-red-600', 'hover:bg-green-600');
+                }, 2000);
+                return;
+            }
+
+            
+            clearInterval(timerInterval);
+
+            els.btnSubmit.disabled = true; els.btnResetOrder.disabled = true;
+            const currentQ = filteredQuestions[currentQuestionIndex];
+            const cleanUserString = Array.from(els.targetList.children).map(el => el.textContent).join('').replace(/[，。！？、；：「」『』（）\[\]() ,.?!]/g, '').replace(/\s+/g, '');
+            const cleanCorrectAnswer = currentQ.answer.replace(/[，。！？、；：「」『』（）\[\]() ,.?!]/g, '').replace(/\s+/g, '');
+
+            if (cleanUserString === cleanCorrectAnswer) {
+                playCorrectSound();
+                if (!questionRetryMode) correctCount++;
+                
+                let bonus = 0;
+                if (!questionRetryMode) {
+                    if (questionElapsedSeconds <= 8) bonus = 10;
+                    else if (questionElapsedSeconds <= 15) bonus = 5;
+                    else if (questionElapsedSeconds <= 25) bonus = 2;
+                }
+                const earnedPoints = BASE_SCORE_PER_QUESTION + bonus;
+                score += earnedPoints;
+                showFeedbackOverlay(true, earnedPoints, currentQ.answer);
+            } else {
+                playWrongSound();
+                els.wrongAnsDisplay.textContent = currentQ.answer;
+                els.wrongOverlay.classList.remove('hidden'); els.wrongOverlay.classList.add('flex');
+                questionRetryMode = true; 
+            }
+            els.score.textContent = score;
+        });
+
+        
+        els.btnRetry.addEventListener('click', function() {
+            els.wrongOverlay.classList.add('hidden'); els.wrongOverlay.classList.remove('flex');
+            Array.from(els.targetList.children).forEach(item => els.sourceList.appendChild(item));
+            els.btnSubmit.disabled = false; els.btnResetOrder.disabled = false;
+            
+            timerInterval = setInterval(updateTimer, 1000);
+        });
+
+        function showFeedbackOverlay(isCorrect, points, correctAnsStr) {
+            els.feedbackOverlay.classList.remove('hidden'); els.feedbackOverlay.classList.add('flex');
+            els.fbIcon.textContent = "🎉"; els.fbTitle.textContent = "太棒了，答對囉！";
+            els.fbDesc.innerHTML = `獲得分數: <span class="font-black text-green-600 text-3xl">+${points}</span> 分`;
+            if (currentQuestionIndex >= filteredQuestions.length - 1) {
+                els.btnNext.innerHTML = "看最終成績 🏆";
+                els.btnNext.classList.replace('bg-blue-500', 'bg-yellow-500'); els.btnNext.classList.replace('hover:bg-blue-600', 'hover:bg-yellow-600');
+            }
+        }
+
+        els.btnNext.addEventListener('click', function() {
+            currentQuestionIndex++;
+            if (currentQuestionIndex < filteredQuestions.length) loadQuestion();
+            else endGame();
+        });
+
+        function endGame() {
+            clearInterval(timerInterval);
+            els.feedbackOverlay.classList.add('hidden'); els.lbView.classList.remove('hidden'); els.lbView.classList.add('flex');
+            document.getElementById('finalScore').textContent = score;
+            document.getElementById('finalTime').textContent = formatTime(totalElapsedSeconds);
+            document.getElementById('correctCountDisplay').textContent = correctCount;
+            els.selStudentId.value = ''; els.btnSaveScore.disabled = true; els.btnSaveScore.textContent = "儲存紀錄";
+            els.saveScoreArea.classList.remove('hidden');
+            renderLeaderboard();
+        }
+
+        els.selStudentId.addEventListener('change', function() { els.btnSaveScore.disabled = !this.value; });
+
+        els.btnSaveScore.addEventListener('click', function() {
+            if (!els.selStudentId.value) return;
+            let leaderboard = JSON.parse(localStorage.getItem('wordGameLeaderboard_v2')) || [];
+            leaderboard.push({ id: els.selStudentId.value, score: score, time: totalElapsedSeconds, date: new Date().getTime() });
+            leaderboard.sort((a, b) => (b.score !== a.score) ? b.score - a.score : a.time - b.time);
+            localStorage.setItem('wordGameLeaderboard_v2', JSON.stringify(leaderboard.slice(0, 5)));
+            els.btnSaveScore.textContent = "✅ 儲存成功！"; els.btnSaveScore.disabled = true;
+            setTimeout(() => { els.saveScoreArea.classList.add('hidden'); renderLeaderboard(); }, 1000);
+        });
+
+        function renderLeaderboard() {
+            els.lbBody.innerHTML = '';
+            let leaderboard = JSON.parse(localStorage.getItem('wordGameLeaderboard_v2')) || [];
+            if (leaderboard.length === 0) return els.lbBody.innerHTML = '<tr><td colspan="3" class="py-6 text-center text-gray-500 font-medium">目前尚無紀錄，快來挑戰！</td></tr>';
+            leaderboard.forEach((record, i) => {
+                let rankIcon = i + 1, bgClass = "border-b border-yellow-100 last:border-0";
+                if (i === 0) { rankIcon = '🥇'; bgClass = "bg-yellow-50 font-bold border-b border-yellow-200"; }
+                else if (i === 1) rankIcon = '🥈'; else if (i === 2) rankIcon = '🥉';
+                els.lbBody.innerHTML += `<tr class="${bgClass}"><td class="py-3 px-4 text-center text-2xl w-20">${rankIcon}</td><td class="py-3 px-4 text-center text-lg text-gray-700">${record.id} 號</td><td class="py-3 px-4 text-right text-blue-600 font-extrabold text-2xl">${record.score}</td></tr>`;
+            });
+        }
+
+        els.btnNavLb.addEventListener('click', function() {
+            if (!els.lbView.classList.contains('hidden')) { els.lbView.classList.add('hidden'); els.lbView.classList.remove('flex'); } 
+            else { renderLeaderboard(); els.saveScoreArea.classList.add('hidden'); els.lbView.classList.remove('hidden'); els.lbView.classList.add('flex'); }
+        });
+    </script>
+
+    <!-- API 設定彈窗 -->
+    <div id="apiConfigModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-3xl p-6 md:p-8 max-w-lg w-full shadow-2xl border border-blue-100">
+            <h3 class="text-2xl font-black text-gray-800 mb-3 flex items-center gap-2">⚙️ 題庫來源設定</h3>
+            <p class="text-sm text-gray-600 mb-4 leading-relaxed">
+                可自訂 Google Sheets (Apps Script Web App) 題庫 API 網址，或使用內建範例題庫。
+            </p>
+            <label class="block text-sm font-bold text-gray-700 mb-1">Google Apps Script Web App URL：</label>
+            <input type="text" id="apiInput" placeholder="https://script.google.com/macros/s/.../exec"
+                class="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none text-sm mb-4">
+            
+            <div class="flex flex-col sm:flex-row gap-3 justify-end">
+                <button onclick="resetToBuiltin()" class="px-5 py-2.5 rounded-xl border-2 border-gray-300 font-bold text-gray-700 hover:bg-gray-100 transition text-sm">
+                    使用內建題庫
+                </button>
+                <button onclick="saveApiUrl()" class="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-md transition text-sm">
+                    儲存並重新載入
+                </button>
+                <button onclick="closeApiModal()" class="px-4 py-2.5 rounded-xl bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold transition text-sm">
+                    關閉
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function openApiModal() {
+            document.getElementById('apiInput').value = localStorage.getItem('wordGame_customApiUrl') || DEFAULT_API_URL;
+            document.getElementById('apiConfigModal').classList.remove('hidden');
+            document.getElementById('apiConfigModal').classList.add('flex');
+        }
+        function closeApiModal() {
+            document.getElementById('apiConfigModal').classList.add('hidden');
+            document.getElementById('apiConfigModal').classList.remove('flex');
+        }
+        function saveApiUrl() {
+            const val = document.getElementById('apiInput').value.trim();
+            if (val) {
+                localStorage.setItem('wordGame_customApiUrl', val);
+            } else {
+                localStorage.removeItem('wordGame_customApiUrl');
+            }
+            window.location.reload();
+        }
+        function resetToBuiltin() {
+            localStorage.removeItem('wordGame_customApiUrl');
+            window.location.reload();
+        }
+    </script>
+</body>
+
+</html>
