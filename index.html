@@ -54,12 +54,11 @@
             <span class="text-3xl">🧩</span>
             <h1 class="text-2xl font-extrabold text-blue-800 tracking-wide">語詞重組大挑戰</h1>
         </div>
-        <div class="hidden md:flex gap-2">
-            <!-- API 設定按鈕 -->
-            <button id="navApiSettings" onclick="openApiModal()" class="bg-blue-100 hover:bg-blue-200 text-blue-800 px-4 py-2 rounded-full font-bold transition flex items-center gap-2 text-sm md:text-base">
+        <div class="flex gap-2 items-center">
+            <button id="navApiSettings" onclick="openApiModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 md:px-5 py-2 rounded-full font-bold transition flex items-center gap-1.5 text-xs md:text-sm shadow-sm cursor-pointer hover:shadow">
                 ⚙️ 題庫來源
             </button>
-            <button id="navLeaderboard" class="bg-yellow-100 hover:bg-yellow-200 text-yellow-800 px-4 py-2 rounded-full font-bold transition flex items-center gap-2">
+            <button id="navLeaderboard" class="bg-yellow-100 hover:bg-yellow-200 text-yellow-800 px-3 md:px-4 py-2 rounded-full font-bold transition flex items-center gap-1.5 text-xs md:text-sm cursor-pointer">
                 🏆 英雄榜
             </button>
         </div>
@@ -178,7 +177,19 @@
         
         <aside class="w-full lg:w-[340px] flex flex-col gap-4 flex-shrink-0">
             <div class="bg-white rounded-3xl shadow-lg border border-yellow-100 p-6">
-                <h3 class="text-lg font-bold text-yellow-800 mb-4 flex items-center gap-2">⚙️ 課本單元設定</h3>
+                <h3 class="text-lg font-bold text-yellow-800 mb-3 flex items-center gap-2">⚙️ 課本單元設定</h3>
+                <!-- 題庫來源狀態卡片 -->
+                <div class="mb-4 p-3 bg-blue-50 border-2 border-blue-200 rounded-2xl flex items-center justify-between shadow-sm">
+                    <div class="flex flex-col">
+                        <span class="text-xs font-bold text-gray-500">目前題庫</span>
+                        <span id="sourceStatusText" class="text-xs md:text-sm font-extrabold text-blue-800">
+                            🔄 連線讀取中...
+                        </span>
+                    </div>
+                    <button onclick="openApiModal()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded-xl transition shadow cursor-pointer">
+                        ⚙️ 設定
+                    </button>
+                </div>
                 <div class="space-y-4">
                     <select id="selectVersion" class="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-yellow-400 focus:outline-none bg-gray-50 font-bold text-gray-700 disabled:opacity-50" disabled>
                         <option value="">等待資料...</option>
@@ -322,6 +333,18 @@
             { version: "南一", grade: "三年級", lesson: "第一課 學校好所在", chunks: "老師講故事 / 逐家恬恬聽", answer: "老師講故事逐家恬恬聽" }
         ];
 
+        function updateSourceBadge(type, count) {
+            const badge = document.getElementById('sourceStatusText');
+            if (!badge) return;
+            if (type === 'sheet') {
+                badge.innerHTML = `<span class="text-green-600">🟢 Google 試算表 (${count} 題)</span>`;
+            } else if (type === 'gas') {
+                badge.innerHTML = `<span class="text-blue-600">🟢 Apps Script (${count} 題)</span>`;
+            } else {
+                badge.innerHTML = `<span class="text-amber-600">📁 內建題庫 (${count} 題)</span>`;
+            }
+        }
+
         // 解析 Google 試算表（透過 Google Visualization API 即時跨域讀取公開試算表）
         async function fetchFromGoogleSheet(sheetUrl) {
             const idMatch = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
@@ -333,10 +356,16 @@
 
             const gvizUrl = `https://docs.google.com/spreadsheets/d/${docId}/gviz/tq?tqx=out:json&gid=${gid}`;
             const response = await fetch(gvizUrl);
+            if (!response.ok) throw new Error("HTTP " + response.status);
             const text = await response.text();
             const jsonStr = text.substring(text.indexOf('{'), text.lastIndexOf('}') + 1);
             const data = JSON.parse(jsonStr);
-            const rawRows = data.table.rows.map(r => r.c.map(cell => (cell ? cell.v : '')));
+            if (!data.table || !data.table.rows) return null;
+
+            const rawRows = data.table.rows.map(r => {
+                if (!r || !r.c) return [];
+                return r.c.map(cell => (cell && cell.v !== undefined && cell.v !== null ? cell.v : ''));
+            });
             if (rawRows.length <= 1) return null;
 
             const header = rawRows[0].map(h => String(h || '').trim());
@@ -349,6 +378,7 @@
             const questions = [];
             for (let i = 1; i < rawRows.length; i++) {
                 const row = rawRows[i];
+                if (!row || row.length === 0) continue;
                 const v = String((colVersion !== -1 ? row[colVersion] : row[0]) || '').trim();
                 const g = String((colGrade !== -1 ? row[colGrade] : row[1]) || '').trim();
                 const l = String((colLesson !== -1 ? row[colLesson] : row[2]) || '').trim();
@@ -365,8 +395,12 @@
         async function initDataLoader() {
             // 1. 若在 Google Apps Script iframe 環境中
             if (typeof google !== 'undefined' && google.script && google.script.run) {
-                google.script.run.withSuccessHandler(onDataLoaded).withFailureHandler(function(e) {
+                google.script.run.withSuccessHandler(function(data) {
+                    updateSourceBadge('gas', data.length);
+                    onDataLoaded(data);
+                }).withFailureHandler(function(e) {
                     console.warn("GAS 連線失敗，切換至內建題庫:", e);
+                    updateSourceBadge('builtin', BUILTIN_QUESTIONS.length);
                     onDataLoaded(BUILTIN_QUESTIONS);
                 }).getSheetData();
                 return;
@@ -378,6 +412,7 @@
                     const questions = await fetchFromGoogleSheet(activeSourceUrl);
                     if (questions && questions.length > 0) {
                         console.log("成功從 Google 試算表即時載入題庫，共", questions.length, "筆題目");
+                        updateSourceBadge('sheet', questions.length);
                         onDataLoaded(questions);
                         return;
                     }
@@ -395,6 +430,7 @@
                         const json = await response.json();
                         if (Array.isArray(json) && json.length > 0) {
                             console.log("成功從 Google Apps Script API 載入題庫，共", json.length, "筆題目");
+                            updateSourceBadge('gas', json.length);
                             onDataLoaded(json);
                             return;
                         }
@@ -406,6 +442,7 @@
 
             // 4. 預設載入內建題庫
             console.log("載入內建題庫完成");
+            updateSourceBadge('builtin', BUILTIN_QUESTIONS.length);
             onDataLoaded(BUILTIN_QUESTIONS);
         }
 
